@@ -1475,7 +1475,7 @@ class GitStats:
 			sys.exit(0)
 
 		outputpath = os.path.abspath(args[-1])
-		preDate = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+		preDate = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y/%m/%d')
 		outputpath = '%s/%s' % (outputpath, preDate)
 		rundir = os.getcwd()
 
