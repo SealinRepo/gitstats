@@ -1,6 +1,8 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # Copyright (c) 2007-2014 Heikki Hokkanen <hoxu@users.sf.net> & others (see doc/AUTHOR)
 # GPLv2 / GPLv3
+# -*- coding: UTF-8 -*-
+
 import datetime
 import getopt
 import glob
@@ -24,6 +26,7 @@ os.environ['LC_ALL'] = 'C'
 
 GNUPLOT_COMMON = 'set terminal png transparent size 640,240\nset size 1.0,1.0\n'
 ON_LINUX = (platform.system() == 'Linux')
+ON_MAC = (platform.system() == 'Darwin')
 WEEKDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
 
 exectime_internal = 0.0
@@ -133,6 +136,17 @@ def getnumoflinesinblob(ext_blob):
 	ext, blob_id = ext_blob
 	return (ext, blob_id, int(getpipeoutput(['git cat-file blob %s' % blob_id, 'wc -l']).split()[0]))
 
+def sumChangedLine(data):
+	add_lines = 0
+	rem_lines = 0
+	for v in data:
+		if len(v) == 0:
+			continue
+		row_arr = v.split('\t')
+		add_lines += int(row_arr[0] if row_arr[0].isalnum() else '1')
+		rem_lines += int(row_arr[1] if row_arr[1].isalnum() else '1')
+	return add_lines, rem_lines
+
 class DataCollector:
 	"""Manages data collection from a revision control repository."""
 	def __init__(self):
@@ -148,7 +162,7 @@ class DataCollector:
 		self.activity_by_year_week = {} # yy_wNN -> commits
 		self.activity_by_year_week_peak = 0
 
-		self.authors = {} # name -> {commits, first_commit_stamp, last_commit_stamp, last_active_day, active_days, lines_added, lines_removed}
+		self.authors = {} # name -> {commits, first_commit_stamp, last_commit_stamp, last_active_day, active_days, lines_added, lines_removed, add_line_pre_18, rem_line_pre_18, add_line_after_18, rem_line_after_18}
 
 		self.total_commits = 0
 		self.total_files = 0
@@ -587,6 +601,27 @@ class GitDataCollector(DataCollector):
 		# defined for stamp, author only if author commited at this timestamp.
 		self.changes_by_date_by_author = {} # stamp -> author -> lines_added
 
+		preDate = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+		for auth in self.authors.keys():
+			# author lines before 18
+			beginTime = preDate + ' 00:00:00'
+			endTime = preDate + ' 18:00:00'
+			# authorLines = getpipeoutput(['git log --author="Sealin" --since="2011-01-01" --until="2021-02-01" --pretty=tformat: --numstat', "awk '{ add += $1 ; subs += $2 ; loc += $1 - $2 } END { printf \"%s %s %s\n\",add ? add :0,subs ? subs : 0,loc ? loc : 0 }'"])
+			authorLines = getpipeoutput(['git log --author="%s" --since="%s" --until="%s" --pretty=tformat: --numstat'
+										 % (auth, beginTime, endTime)]).split('\n')
+			lineCount = sumChangedLine(authorLines)
+			self.authors[auth]['add_line_pre_18'] = lineCount[0]
+			self.authors[auth]['rem_line_pre_18'] = lineCount[1]
+
+			# author lines after 18
+			beginTime = preDate + ' 18:00:00'
+			endTime = preDate + ' 23:59:59'
+			authorLines = getpipeoutput(['git log --author="%s" --since="%s" --until="%s" --pretty=tformat: --numstat'
+										 % (auth, beginTime, endTime)]).split('\n')
+			lineCount = sumChangedLine(authorLines)
+			self.authors[auth]['add_line_after_18'] = lineCount[0]
+			self.authors[auth]['rem_line_after_18'] = lineCount[1]
+
 		# Similar to the above, but never use --first-parent
 		# (we need to walk through every commit to know who
 		# committed what, not just through mainline)
@@ -963,10 +998,14 @@ class HTMLReportCreator(ReportCreator):
 		f.write(html_header(2, 'List of Authors'))
 
 		f.write('<table class="authors sortable" id="authors">')
-		f.write('<tr><th>Author</th><th>Commits (%)</th><th>+ lines</th><th>- lines</th><th>First commit</th><th>Last commit</th><th class="unsortable">Age</th><th>Active days</th><th># by commits</th></tr>')
+		f.write('<tr><th>Author</th><th>Commits (%)</th><th>+ lines</th><th>- lines</th><th>First commit</th><th>Last commit</th><th class="unsortable">Age</th><th>Active days</th><th># by commits</th><th>+liens before 18</th><th>-lines before 18</th><th>+lines after 18</th><th>-lines after 18</th></tr>')
 		for author in data.getAuthors(conf['max_authors']):
 			info = data.getAuthorInfo(author)
-			f.write('<tr><td>%s</td><td>%d (%.2f%%)</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td></tr>' % (author, info['commits'], info['commits_frac'], info['lines_added'], info['lines_removed'], info['date_first'], info['date_last'], info['timedelta'], len(info['active_days']), info['place_by_commits']))
+			f.write('<tr><td>%s</td><td>%d (%.2f%%)</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td></tr>' % (
+				author, info['commits'], info['commits_frac'], info['lines_added'], info['lines_removed'],
+				info['date_first'], info['date_last'], info['timedelta'], len(info['active_days']),
+				info['place_by_commits'], info['add_line_pre_18'], info['rem_line_pre_18'], info['add_line_after_18'],
+				info['rem_line_after_18']))
 		f.write('</table>')
 
 		allauthors = data.getAuthors()
@@ -1390,6 +1429,7 @@ plot """
 		f.write("""
 <div class="nav">
 <ul>
+<li><a href="/gitstats">Project List</a></li>
 <li><a href="index.html">General</a></li>
 <li><a href="activity.html">Activity</a></li>
 <li><a href="authors.html">Authors</a></li>
@@ -1435,6 +1475,7 @@ class GitStats:
 			sys.exit(0)
 
 		outputpath = os.path.abspath(args[-1])
+		preDate = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 		rundir = os.getcwd()
 
 		try:
