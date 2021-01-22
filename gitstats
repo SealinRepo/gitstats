@@ -1528,7 +1528,7 @@ class GitStats:
 			print
 
 if __name__=='__main__':
-	sourcePath=os.path.abspath(sys.argv[1])
+	sourcePath = os.path.abspath(sys.argv[1])
 	if not os.path.exists('%s/.git' % sourcePath):
 		print '%s is not a git project' % sourcePath
 		sys.exit(0)
